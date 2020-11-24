@@ -1,10 +1,25 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+import sys
+import os
+import tensorflow as tf
+
+if 'COLAB_GPU' in os.environ:
+  # fix resolve modules
+  from os.path import dirname
+  sys.path.append(dirname(dirname(dirname(__file__))))
+else: # local GPU
+  gpus = tf.config.experimental.list_physical_devices('GPU')
+  tf.config.experimental.set_virtual_device_configuration(
+    gpus[0], [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1 * 1024)]
+  )
+
 from Core.CMazeEnviroment import CMazeEnviroment, MazeActions
 import numpy as np
 import pygame
 import pygame.locals as G
 import random
+from model import createModel
 
 def createMaze():
   sz = 64
@@ -12,8 +27,9 @@ def createMaze():
   res = CMazeEnviroment(
     maze=maze,
     pos=(0, 0),
-    FOV=3
-  ) 
+    FOV=3,
+    minimapSize=8
+  )
   res.respawn()
   return res
   
@@ -27,7 +43,8 @@ class Colors:
   PURPLE = (255, 0, 255)
 
 class App:
-  MODES = ['manual', 'random']
+  MODES = ['manual', 'random', 'agent']
+  
   def __init__(self):
     self._running = True
     self._display_surf = None
@@ -59,13 +76,17 @@ class App:
         self._mode = self.MODES[(mode + 1) % len(self.MODES)]
         self._paused = True
         
+        if 'agent' == self._mode:
+          self._agent = createModel(shape=self._maze.input_size)
+          self._agent.load_weights('model.h5')
+        
       if G.K_SPACE == event.key:
         self._paused = not self._paused
 
       if G.K_ESCAPE == event.key:
         self._running = False
       
-      if 'manual' == self._mode:  
+      if 'manual' == self._mode:
         if G.K_r == event.key:
           self._createMaze()
           
@@ -89,31 +110,76 @@ class App:
     return
  
   def on_loop(self):
-    if ('random' == self._mode) and not self._paused:
+    if self._paused: return
+    
+    if 'random' == self._mode:
       for _ in range(self._speed):
         actions = self._maze.validActions()
         if actions:
           self._maze.apply(random.choice(actions))
+          
+    if 'agent' == self._mode:
+      probe = self._agent.predict(np.array([self._maze.state2input()]))[0]
+      for i in self._maze.invalidActions():
+        probe[i] = -1
+      pred = np.argmax(probe)
+      
+      act = list(MazeActions)[pred]
+      if self._maze.isPossible(act):
+        self._maze.apply(act)
     pass
   
   def _renderMaze(self):
     fog = self._maze.fog
     maze = self._maze.maze
+    moves = self._maze.moves
+    
     h, w = maze.shape
     dx, dy = delta = np.array([640, 640]) / np.array([w, h])
     for ix in range(w):
       for iy in range(h):
         isDiscovered = 0 < fog[ix, iy]
         isWall = 0 < maze[ix, iy]
+        isWasHere = 0 < moves[ix, iy]
         y, x = delta * np.array([ix, iy])
         
-        clr = Colors.PURPLE if isWall else Colors.WHITE
+        clr = Colors.WHITE
+        if isWasHere: clr = Colors.GREEN
+        if isWall: clr = Colors.PURPLE
+        
         if not isDiscovered:
           clr = np.array(clr) * .3
         pygame.draw.rect(self._display_surf, clr, [x, y, dx - 1, dy - 1], 0)
     # current pos
     x, y = delta * self._maze.pos
     pygame.draw.rect(self._display_surf, Colors.RED, [x, y, dx - 1, dy - 1], 0)
+    return
+  
+  def _renderMazeMinimap(self):
+    anchor = np.array((450, 650))
+    maze, moves = self._maze.minimap()
+    h, w = maze.shape
+    dx, dy = delta = 2 * np.array([64, 64]) / np.array([w, h])
+    for ix in range(w):
+      for iy in range(h):
+        isWall = 0 < maze[ix, iy]
+        isWasHere = 0 < moves[ix, iy]
+        isUnknownArea = maze[ix, iy] < 0
+        
+        clr = Colors.WHITE
+        if isWasHere: clr = Colors.GREEN
+        if isWall: clr = Colors.PURPLE
+        if isUnknownArea: clr = Colors.BLACK
+  
+        y, x = (delta * np.array([ix, iy])) + anchor
+        pygame.draw.rect(self._display_surf, clr, [x, y, dx - 1, dy - 1], 0)
+    
+    self._display_surf.blit(
+      self._font.render(
+        'Observed state:',
+        False, Colors.BLUE
+      ), (anchor[1], anchor[0] - 25)
+    )
     return
   
   def _renderInfo(self):
@@ -135,6 +201,7 @@ class App:
   def on_render(self):
     self._display_surf.fill(Colors.SILVER)
     self._renderMaze()
+#     self._renderMazeMinimap()
     self._renderInfo()
     pygame.display.flip()
  

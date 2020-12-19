@@ -77,9 +77,8 @@ class CMazeEnviroment:
     return (data[x - d:x + d + 1, y - d:y + d + 1] for data in (maze, fog, moves))
   
   def minimap(self):
-    #maze, fog, moves = self._takeShot()
-    maze, fog, moves = self.maze, self.fog, self.moves
-    return (maze * fog, moves)
+    maze, fog, moves = self._takeShot()
+    return ((maze * fog) - (1 - fog), moves)
   
   @property
   def state(self):
@@ -120,7 +119,7 @@ class CMazeEnviroment:
   
   def state2input(self):
     maze, moves = self.minimap()
-    state = np.dstack((maze, ))
+    state = np.dstack((maze, moves))
     return state
 
   @property

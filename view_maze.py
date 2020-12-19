@@ -1,18 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-import sys
-import os
 import tensorflow as tf
+import os
 
-if 'COLAB_GPU' in os.environ:
-  # fix resolve modules
-  from os.path import dirname
-  sys.path.append(dirname(dirname(dirname(__file__))))
-else: # local GPU
-  gpus = tf.config.experimental.list_physical_devices('GPU')
-  tf.config.experimental.set_virtual_device_configuration(
-    gpus[0], [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1 * 1024)]
-  )
+# limit GPU usage
+gpus = tf.config.experimental.list_physical_devices('GPU')
+tf.config.experimental.set_virtual_device_configuration(
+  gpus[0], [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1 * 1024)]
+)
 
 from Core.CMazeEnviroment import CMazeEnviroment, MazeActions
 import numpy as np
@@ -44,6 +39,7 @@ class Colors:
 
 class App:
   MODES = ['manual', 'random', 'agent']
+  NETWORKS = ['best', 'latest']
   
   def __init__(self):
     self._running = True
@@ -52,6 +48,8 @@ class App:
     self._mode = 'manual'
     self._paused = True
     self._speed = 20
+    self._usedNetwork = self.NETWORKS[0]
+    return
   
   def _createMaze(self):
     self._maze = createMaze()
@@ -65,7 +63,18 @@ class App:
     pygame.display.set_caption('Deep maze')
     self._font = pygame.font.Font(pygame.font.get_default_font(), 16)
     self._running = True
- 
+  
+  def _createNewAgent(self):
+    filename = 'weights/%s.h5' % self._usedNetwork
+    if not os.path.exists(filename):
+      self._usedNetwork = self.NETWORKS[0]
+      filename = 'weights/%s.h5' % self._usedNetwork
+      
+    self._agent = createModel(shape=self._maze.input_size)
+    self._agent.load_weights(filename)
+    self._paused = True
+    return
+
   def on_event(self, event):
     if event.type == G.QUIT:
       self._running = False
@@ -77,12 +86,21 @@ class App:
         self._paused = True
         
         if 'agent' == self._mode:
-          self._agent = createModel(shape=self._maze.input_size)
-          self._agent.load_weights('model.h5')
+          self._createNewAgent()
         
       if G.K_SPACE == event.key:
         self._paused = not self._paused
 
+      if 'agent' == self._mode:
+        if G.K_r == event.key:
+          self._createMaze()
+        if G.K_n == event.key:
+          self._createNewAgent()
+        if G.K_t == event.key:
+          network = next((i for i, x in enumerate(self.NETWORKS) if x == self._usedNetwork))
+          self._usedNetwork = self.NETWORKS[(network + 1) % len(self.NETWORKS)]
+          self._createNewAgent()
+          
       if G.K_ESCAPE == event.key:
         self._running = False
       
@@ -121,7 +139,7 @@ class App:
     if 'agent' == self._mode:
       probe = self._agent.predict(np.array([self._maze.state2input()]))[0]
       for i in self._maze.invalidActions():
-        probe[i] = -1
+        probe[i] = -float('inf')
       pred = np.argmax(probe)
       
       act = list(MazeActions)[pred]
@@ -196,12 +214,20 @@ class App:
         False, Colors.BLUE
       ), (655, 35)
     )
+    
+    if 'agent' == self._mode:
+      self._display_surf.blit(
+        self._font.render(
+          'Network: %s' % (self._usedNetwork),
+          False, Colors.BLUE
+        ), (655, 55)
+      ) 
     return
   
   def on_render(self):
     self._display_surf.fill(Colors.SILVER)
     self._renderMaze()
-#     self._renderMazeMinimap()
+    self._renderMazeMinimap()
     self._renderInfo()
     pygame.display.flip()
  

@@ -39,52 +39,51 @@ def emulate(env, model, exploreRate, exploreDecay, steps, stopOnInvalid=False):
       probe = model.predict(np.array([state]))[0]
       if not stopOnInvalid:
         for i in env.invalidActions():
-          probe[i] = -1
+          probe[i] = -float('inf')
       act = np.argmax(probe)
 
     if stopOnInvalid and not (act in valid):
-      episodeReplay.append([state, act, -1, env.state2input()])
+      episodeReplay.append([state, act, -10, env.state2input()])
       break
     
     prevScore = env.score
     env.apply(MAZE_ACTIONS[act])
-    normedScore = 1 if 0 < (env.score - prevScore) else -.1
+    normedScore = 1 if 0 < (env.score - prevScore) else -0.1
     episodeReplay.append([state, act, normedScore, env.state2input()])
     
     done = env.done
-    exploreRate = max((.01, exploreRate * exploreDecay))
+    exploreRate = max((.001, exploreRate * exploreDecay))
   return episodeReplay
 
 if __name__ == "__main__":
-  sz = 32
+  sz = 64
   env = CMazeEnviroment(
     maze=(0.8 < np.random.rand(sz, sz)).astype(np.float32),
     pos=(0, 0),
     FOV=3,
     minimapSize=8
   )
-  memory = CMazeExperience(maxSize=100)
+  memory = CMazeExperience(maxSize=1000)
   done = False
-  batch_size = 64
-  playSteps = 64
+  batch_size = 256
+  playSteps = 96
   
-  bestModelScore = 0
+  bestModelScore = -float('inf')
   model = createModel(shape=env.input_size)
   model.compile(
     optimizer=Adam(lr=1e-3),
     loss='mean_squared_error'
   )
-#   model.load_weights('model.h5')
+  #model.load_weights('weights/best.h5')
   
   targetModel = createModel(shape=env.input_size)
-  np.set_printoptions(precision=3)
   # collect data
-  while len(memory) < 50:
+  while len(memory) < 100:
     env.respawn()
     episodeReplay = emulate(
       env, model,
-      exploreRate=0.9,
-      exploreDecay=0.9,
+      exploreRate=1,
+      exploreDecay=1,
       steps=playSteps,
       stopOnInvalid=False
     ) 
@@ -92,13 +91,12 @@ if __name__ == "__main__":
     if 1 < len(episodeReplay):
       memory.addEpisode(episodeReplay)
       print(len(memory), env.score)
-  memory.update()
 
-  train_episodes = 500
-  test_episodes = 10
-  exploreRate = 1
-  exploreDecayPerEpoch = .9
-  exploreDecay = .9
+  train_episodes = 100
+  test_episodes = 20
+  exploreRate = .5
+  exploreDecayPerEpoch = .95
+  exploreDecay = .95
   for epoch in range(5000):
     print('Epoch %d' % epoch)
     # train
@@ -106,16 +104,17 @@ if __name__ == "__main__":
     lossSum = 0
     for n in range(train_episodes):
       states, actions, rewards, nextStates, nextReward = memory.take_batch(batch_size)
-      targets = targetModel.predict(nextStates)
-      targets[np.arange(len(targets)), actions] = rewards + np.max(targets, axis=1) * .9 * nextReward
+      nextScores = targetModel.predict(nextStates)
+      targets = targetModel.predict(states)
+      targets[np.arange(len(targets)), actions] = rewards + np.max(nextScores, axis=1) * .95 * nextReward
 
       lossSum += model.fit(
         states, targets,
         epochs=1,
         verbose=0
       ).history['loss'][0]
+    
     print('Avg. train loss: %.4f' % (lossSum / train_episodes))
-    print(targets[0])
 
     # test
     print('Epoch %d testing' % epoch)
@@ -141,6 +140,6 @@ if __name__ == "__main__":
     if bestModelScore < scoreSum:
       bestModelScore = scoreSum
       print('save best model')
-      model.save_weights('model.h5')
-    model.save_weights('latest.h5')
+      model.save_weights('weights/best.h5')
+    model.save_weights('weights/latest.h5')
     exploreRate *= exploreDecayPerEpoch

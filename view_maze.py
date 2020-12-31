@@ -2,24 +2,27 @@
 # -*- coding: utf-8 -*-
 import tensorflow as tf
 import os
-
+from Agent.DQNEnsembleAgent import DQNEnsembleAgent
 # limit GPU usage
 gpus = tf.config.experimental.list_physical_devices('GPU')
 tf.config.experimental.set_virtual_device_configuration(
   gpus[0], [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1 * 1024)]
 )
 
-from Core.CMazeEnviroment import CMazeEnviroment, MazeActions
+from Core.CMazeEnvironment import CMazeEnvironment, MazeActions
 import numpy as np
 import pygame
 import pygame.locals as G
 import random
+from Agent.DQNAgent import DQNAgent
+import glob
+from collections import namedtuple
 from model import createModel
 
 def createMaze():
-  sz = 64
+  sz = 16 * 4
   maze = (0.8 < np.random.rand(sz, sz)).astype(np.float32)
-  res = CMazeEnviroment(
+  res = CMazeEnvironment(
     maze=maze,
     pos=(0, 0),
     FOV=3,
@@ -37,41 +40,70 @@ class Colors:
   RED = (255, 0, 0)
   PURPLE = (255, 0, 255)
 
+RLAgent = namedtuple('RLAgent', 'name agent environment')
+
 class App:
   MODES = ['manual', 'random', 'agent']
-  NETWORKS = ['best', 'latest']
   
   def __init__(self):
     self._running = True
     self._display_surf = None
-    self._createMaze()
     self._mode = 'manual'
     self._paused = True
-    self._speed = 20
-    self._usedNetwork = self.NETWORKS[0]
+    self._speed = 1
+    self._agents = []
+    self._activeAgent = 0
+    self._createMaze()
     return
   
   def _createMaze(self):
     self._maze = createMaze()
     self._initMaze = self._maze.copy()
+    if 'agent' == self._mode:
+      self._assignMaze2Agents()
     return
   
   def on_init(self):
     pygame.init()
     
-    self._display_surf = pygame.display.set_mode((800, 650), pygame.HWSURFACE)
+    self._display_surf = pygame.display.set_mode((850, 650), pygame.HWSURFACE)
     pygame.display.set_caption('Deep maze')
     self._font = pygame.font.Font(pygame.font.get_default_font(), 16)
     self._running = True
   
+  def _assignMaze2Agents(self):
+    agents = []
+    for agent in self._agents:
+      agents.append(RLAgent(
+        agent.name, agent.agent,
+        self._initMaze.copy()
+      ))
+
+    self._agents = agents
+    return
+  
   def _createNewAgent(self):
-    filename = 'weights/%s.h5' % self._usedNetwork
-    if not os.path.exists(filename):
-      self._usedNetwork = self.NETWORKS[0]
-      filename = 'weights/%s.h5' % self._usedNetwork
-      
-    self._agent = createModel(shape=self._maze.input_size)
-    self._agent.load_weights(filename)
+    self._agents = []
+    models = []
+    for i, x in enumerate(glob.iglob('weights/*.h5')):
+      filename = os.path.abspath(x)
+      model = createModel(shape=self._maze.input_size)
+      model.load_weights(filename)
+      models.append(model)
+      agent = DQNAgent(model)
+      name = os.path.basename(filename)
+ 
+      self._agents.append(RLAgent(
+        name[:-3], agent, self._initMaze.copy()
+      ))
+     
+    self._agents.insert(0, RLAgent(
+      'ensemble', 
+      DQNEnsembleAgent(models),
+      self._initMaze.copy()
+    ))
+    
+    self._activeAgent = 0
     self._paused = True
     return
 
@@ -80,53 +112,55 @@ class App:
       self._running = False
 
     if event.type == G.KEYDOWN:
+      if G.K_ESCAPE == event.key:
+        self._running = False
+        
+      if G.K_r == event.key:
+        self._createMaze()
+      # Switch mode
       if G.K_m == event.key:
         mode = next((i for i, x in enumerate(self.MODES) if x == self._mode))
         self._mode = self.MODES[(mode + 1) % len(self.MODES)]
         self._paused = True
+        self._agents = []
         
         if 'agent' == self._mode:
           self._createNewAgent()
-        
+      #####
       if G.K_SPACE == event.key:
         self._paused = not self._paused
-
+      #####
       if 'agent' == self._mode:
-        if G.K_r == event.key:
-          self._createMaze()
         if G.K_n == event.key:
           self._createNewAgent()
-        if G.K_t == event.key:
-          network = next((i for i, x in enumerate(self.NETWORKS) if x == self._usedNetwork))
-          self._usedNetwork = self.NETWORKS[(network + 1) % len(self.NETWORKS)]
-          self._createNewAgent()
-          
-      if G.K_ESCAPE == event.key:
-        self._running = False
-      
+
+        if G.K_a == event.key:
+          self._activeAgent = (self._activeAgent + 1) % len(self._agents)
+
       if 'manual' == self._mode:
-        if G.K_r == event.key:
-          self._createMaze()
+        self._manualEvent(event)
+      
+      if not ('manual' == self._mode):
+        if G.K_KP_PLUS == event.key:
+          self._speed = min((32, 2 * self._speed))
+        if G.K_KP_MINUS == event.key:
+          self._speed = max((1, self._speed // 2))
           
-        if G.K_i == event.key:
-          self._maze = self._initMaze.copy()
-          
-        if G.K_y == event.key:
-          self._maze.respawn()
-          
-        actMapping = {
-          G.K_LEFT: MazeActions.LEFT,
-          G.K_RIGHT: MazeActions.RIGHT,
-          G.K_UP: MazeActions.UP,
-          G.K_DOWN: MazeActions.DOWN
-        }
-        
-        act = actMapping.get(event.key, False)
-        if act and self._maze.isPossible(act):
-          self._maze.apply(act)
-      #####
     return
- 
+
+  def _manualEvent(self, event):
+    actMapping = {
+      G.K_LEFT: MazeActions.LEFT,
+      G.K_RIGHT: MazeActions.RIGHT,
+      G.K_UP: MazeActions.UP,
+      G.K_DOWN: MazeActions.DOWN
+    }
+    
+    act = actMapping.get(event.key, False)
+    if act and self._maze.isPossible(act):
+      self._maze.apply(act)
+    return
+   
   def on_loop(self):
     if self._paused: return
     
@@ -137,20 +171,19 @@ class App:
           self._maze.apply(random.choice(actions))
           
     if 'agent' == self._mode:
-      probe = self._agent.predict(np.array([self._maze.state2input()]))[0]
-      for i in self._maze.invalidActions():
-        probe[i] = -float('inf')
-      pred = np.argmax(probe)
-      
-      act = list(MazeActions)[pred]
-      if self._maze.isPossible(act):
-        self._maze.apply(act)
+      for _ in range(self._speed):
+        for agent in self._agents:
+          maze = agent.environment 
+          pred = agent.agent.process(maze.state2input(), maze.actionsMask())
+          act = list(MazeActions)[pred]
+          if maze.isPossible(act):
+            maze.apply(act)
     pass
   
-  def _renderMaze(self):
-    fog = self._maze.fog
-    maze = self._maze.maze
-    moves = self._maze.moves
+  def _renderMaze(self, env):
+    fog = env.fog
+    moves = env.moves
+    maze = env.maze
     
     h, w = maze.shape
     dx, dy = delta = np.array([640, 640]) / np.array([w, h])
@@ -169,65 +202,53 @@ class App:
           clr = np.array(clr) * .3
         pygame.draw.rect(self._display_surf, clr, [x, y, dx - 1, dy - 1], 0)
     # current pos
-    x, y = delta * self._maze.pos
+    x, y = delta * env.pos
     pygame.draw.rect(self._display_surf, Colors.RED, [x, y, dx - 1, dy - 1], 0)
     return
   
-  def _renderMazeMinimap(self):
-    anchor = np.array((450, 650))
-    maze, moves = self._maze.minimap()
-    h, w = maze.shape
-    dx, dy = delta = 2 * np.array([64, 64]) / np.array([w, h])
-    for ix in range(w):
-      for iy in range(h):
-        isWall = 0 < maze[ix, iy]
-        isWasHere = 0 < moves[ix, iy]
-        isUnknownArea = maze[ix, iy] < 0
-        
-        clr = Colors.WHITE
-        if isWasHere: clr = Colors.GREEN
-        if isWall: clr = Colors.PURPLE
-        if isUnknownArea: clr = Colors.BLACK
+  def _renderAgentsMaze(self):
+    self._renderMaze(self._agents[self._activeAgent].environment)
+    return
   
-        y, x = (delta * np.array([ix, iy])) + anchor
-        pygame.draw.rect(self._display_surf, clr, [x, y, dx - 1, dy - 1], 0)
-    
+  def _drawText(self, text, pos, color):
     self._display_surf.blit(
-      self._font.render(
-        'Observed state:',
-        False, Colors.BLUE
-      ), (anchor[1], anchor[0] - 25)
+      self._font.render(text, False, color),
+      pos
     )
     return
   
   def _renderInfo(self):
-    self._display_surf.blit(
-      self._font.render(
-        'Score: %.2f' % (self._maze.score),
-        False, Colors.BLUE
-      ), (655, 15)
-    )
+    line = lambda i: (655, 15 + i * 20)
     
-    self._display_surf.blit(
-      self._font.render(
-        'Mode: %s' % (self._mode),
-        False, Colors.BLUE
-      ), (655, 35)
-    )
-    
-    if 'agent' == self._mode:
-      self._display_surf.blit(
-        self._font.render(
-          'Network: %s' % (self._usedNetwork),
-          False, Colors.BLUE
-        ), (655, 55)
+    self._drawText('Mode: %s' % (self._mode), line(0), Colors.BLUE) 
+    if not ('agent' == self._mode):
+      self._drawText(
+        'Score: %.1f (%d)' % (self._maze.score * 100.0, self._maze.steps),
+        line(1), Colors.BLUE
       ) 
+      
+    if 'random' == self._mode:
+      self._drawText('Speed: x%.0f' % (self._speed), line(2), Colors.BLUE) 
+
+    if 'agent' == self._mode:
+      self._drawText('Speed: x%.0f' % (self._speed), line(1), Colors.BLUE)
+      for i, agent in enumerate(self._agents):
+        self._drawText(
+          '%s%s | %.1f (%d)' % (
+            '>> ' if i == self._activeAgent else '',
+            agent.name, agent.environment.score * 100.0, agent.environment.steps
+          ),
+          line(2 + i), Colors.BLUE
+        )
     return
   
   def on_render(self):
     self._display_surf.fill(Colors.SILVER)
-    self._renderMaze()
-    self._renderMazeMinimap()
+    if 'agent' == self._mode:
+      self._renderAgentsMaze()
+    else:
+      self._renderMaze(self._maze)
+      
     self._renderInfo()
     pygame.display.flip()
  
@@ -243,7 +264,7 @@ class App:
       self.on_render()
       
     pygame.quit()
- 
+
 def main():
   app = App()
   app.run()

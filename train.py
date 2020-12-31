@@ -2,7 +2,6 @@
 import sys
 import os
 import tensorflow as tf
-from CMazeExperience import CMazeExperience
 
 if 'COLAB_GPU' in os.environ:
   # fix resolve modules
@@ -11,135 +10,66 @@ if 'COLAB_GPU' in os.environ:
 else: # local GPU
   gpus = tf.config.experimental.list_physical_devices('GPU')
   tf.config.experimental.set_virtual_device_configuration(
-    gpus[0], [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1 * 1024)]
+    gpus[0], [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=3 * 1024)]
   )
 
-import random
-import numpy as np
+from learn_environment import learn_environment
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.losses import Huber
 
-from keras.optimizers import Adam
- 
-from Core.CMazeEnviroment import CMazeEnviroment, MAZE_ACTIONS
 from model import createModel
+from Core.MazeRLWrapper import MazeRLWrapper
 
-def emulate(env, model, exploreRate, exploreDecay, steps, stopOnInvalid=False):
-  episodeReplay = []
-  done = False
-  N = 0
-  while (N < steps) and not done:
-    N += 1
-    act = None
-    valid = env.validActionsIndex()
-    if not valid: break
+#######################################
+MAZE_FOV = 3
+MAZE_MINIMAP_SIZE = 8
+MAZE_LOOPLIMIT = 32
+#######################################
 
-    state = env.state2input()      
-    if random.random() < exploreRate:
-      act = random.choice(valid)
-    else:
-      probe = model.predict(np.array([state]))[0]
-      if not stopOnInvalid:
-        for i in env.invalidActions():
-          probe[i] = -float('inf')
-      act = np.argmax(probe)
-
-    if stopOnInvalid and not (act in valid):
-      episodeReplay.append([state, act, -10, env.state2input()])
-      break
-    
-    prevScore = env.score
-    env.apply(MAZE_ACTIONS[act])
-    normedScore = 1 if 0 < (env.score - prevScore) else -0.1
-    episodeReplay.append([state, act, normedScore, env.state2input()])
-    
-    done = env.done
-    exploreRate = max((.001, exploreRate * exploreDecay))
-  return episodeReplay
+def getModel(shape):
+  model = createModel(shape=MODEL_INPUT_SHAPE)
+  model.compile(optimizer=Adam(lr=1e-3), loss=Huber(delta=1))
+  return model
 
 if __name__ == "__main__":
-  sz = 64
-  env = CMazeEnviroment(
-    maze=(0.8 < np.random.rand(sz, sz)).astype(np.float32),
-    pos=(0, 0),
-    FOV=3,
-    minimapSize=8
-  )
-  memory = CMazeExperience(maxSize=1000)
-  done = False
-  batch_size = 256
-  playSteps = 96
+  DEFAULT_MAZE_PARAMS = {
+   'size': 40,
+   'FOV': MAZE_FOV,
+   'minimapSize': MAZE_MINIMAP_SIZE,
+   'loop limit': MAZE_LOOPLIMIT,
+  }
   
-  bestModelScore = -float('inf')
-  model = createModel(shape=env.input_size)
-  model.compile(
-    optimizer=Adam(lr=1e-3),
-    loss='mean_squared_error'
-  )
-  #model.load_weights('weights/best.h5')
+  MODEL_INPUT_SHAPE = MazeRLWrapper(DEFAULT_MAZE_PARAMS).input_size
   
-  targetModel = createModel(shape=env.input_size)
-  # collect data
-  while len(memory) < 100:
-    env.respawn()
-    episodeReplay = emulate(
-      env, model,
-      exploreRate=1,
-      exploreDecay=1,
-      steps=playSteps,
-      stopOnInvalid=False
-    ) 
-    #################
-    if 1 < len(episodeReplay):
-      memory.addEpisode(episodeReplay)
-      print(len(memory), env.score)
-
-  train_episodes = 100
-  test_episodes = 20
-  exploreRate = .5
-  exploreDecayPerEpoch = .95
-  exploreDecay = .95
-  for epoch in range(5000):
-    print('Epoch %d' % epoch)
-    # train
-    targetModel.set_weights(model.get_weights())
-    lossSum = 0
-    for n in range(train_episodes):
-      states, actions, rewards, nextStates, nextReward = memory.take_batch(batch_size)
-      nextScores = targetModel.predict(nextStates)
-      targets = targetModel.predict(states)
-      targets[np.arange(len(targets)), actions] = rewards + np.max(nextScores, axis=1) * .95 * nextReward
-
-      lossSum += model.fit(
-        states, targets,
-        epochs=1,
-        verbose=0
-      ).history['loss'][0]
+  #######################
+  DEFAULT_LEARNING_PARAMS = {
+    'maze': DEFAULT_MAZE_PARAMS,
+    'batch size': 256,
+    'gamma': 0.95,
+    'bootstrapped steps': 3,
     
-    print('Avg. train loss: %.4f' % (lossSum / train_episodes))
+    'epochs': 100,
+    'warm up epochs': 0,
+    'test episodes': 128,
+    'train episodes': lambda _: 128,
+    'train doom episodes': lambda _: 32,
 
-    # test
-    print('Epoch %d testing' % epoch)
-    bestScore = scoreSum = movesSum = 0
-    n = 0
-    while n < test_episodes:
-      env.respawn()
-      episodeReplay = emulate(
-        env, model,
-        exploreRate=exploreRate,
-        exploreDecay=exploreDecay,
-        steps=playSteps*2,
-        stopOnInvalid=True
-      )
-      if 1 < len(episodeReplay):
-        memory.addEpisode(episodeReplay)
-        n += 1
-        bestScore = max((bestScore, env.score))
-        scoreSum += env.score
-        movesSum += len(episodeReplay)
-      #################
-    print('Best score: %.3f, avg. score: %.3f, avg. moves: %.1f' % (bestScore, scoreSum / n, movesSum / n))
-    if bestModelScore < scoreSum:
-      bestModelScore = scoreSum
-      print('save best model')
-      model.save_weights('weights/best.h5')
-    model.save_weights('weights/latest.h5')
-    exploreRate *= exploreDecayPerEpoch
+    'alpha': lambda _: 1,
+    'explore rate': lambda _: 0,
+    
+    'agent noise': 0.01,
+    'clip replay': True,
+    
+    'explore rate after loop': 0.2,
+    'agent noise after loop': 0.1
+  }
+  #######################
+  for i in range(4):
+    learn_environment(
+      getModel(MODEL_INPUT_SHAPE),
+      {
+        **DEFAULT_LEARNING_PARAMS,
+        'name': 'agent-%d' % i,
+        'max test steps': 1000
+      }
+    )

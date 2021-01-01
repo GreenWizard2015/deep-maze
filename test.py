@@ -20,7 +20,6 @@ import glob
 from Agent.DQNAgent import DQNAgent
 from Agent.DQNEnsembleAgent import DQNEnsembleAgent
 import pylab as plt
-import numpy as np
 
 #######################################
 MAZE_FOV = 3
@@ -39,15 +38,18 @@ def plot2file(data, filename, chartname):
     axe.plot(dataset, label=name)
   axe.title.set_text(chartname)
     
-  fig.legend()
+  fig.tight_layout()
+  fig.subplots_adjust(right=0.85)
+  fig.legend(loc="center right", prop={'size': 12})
   fig.savefig(filename)
   plt.close(fig)
   return
 
-def testAgent(environments, agent, name, metrics, N=5):
+def testAgent(environments, agent, name, metrics, N=20):
   print('Agent: %s' % name)
   
-  scoreTop90 = metrics['scores']['%s worst 10%%' % name] = []
+  scoreTop90 = metrics['Worst scores (top 90%)']['%s' % name] = []
+  scoreTop10 = metrics['Best scores (top 10%)']['%s' % name] = []
   
   for i in range(N):
     print('Round %d/%d...' % (i, N))
@@ -60,8 +62,7 @@ def testAgent(environments, agent, name, metrics, N=5):
     
     scores = list(sorted(scores, reverse=True))
     scoreTop90.append(scores[int(0.9 * len(scores))])
-
-    plot2file(metrics, 'chart.jpg', 'scores')
+    scoreTop10.append(scores[int(0.1 * len(scores))])
   return
 
 if __name__ == "__main__":
@@ -69,13 +70,14 @@ if __name__ == "__main__":
     'size': 64,
     'FOV': MAZE_FOV,
     'minimapSize': MAZE_MINIMAP_SIZE,
-    'loop limit': 64,
+    'loop limit': 1000,
   }
   environments = [MazeRLWrapper(MAZE_PARAMS) for _ in range(100)]
   MODEL_INPUT_SHAPE = environments[0].input_size
 
   metrics = {
-    'scores': {}
+    'Worst scores (top 90%)': {},
+    'Best scores (top 10%)': {}
   }
   models = []
   for i, x in enumerate(glob.iglob('weights/*.h5')):
@@ -97,3 +99,6 @@ if __name__ == "__main__":
     name='ensemble',
     metrics=metrics
   )
+  
+  for i, name in enumerate(metrics.keys()):
+    plot2file(metrics, 'chart-%d.jpg' % i, name)

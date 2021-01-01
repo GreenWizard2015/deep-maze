@@ -40,7 +40,23 @@ class Colors:
   RED = (255, 0, 0)
   PURPLE = (255, 0, 255)
 
-RLAgent = namedtuple('RLAgent', 'name agent environment')
+class DeathDetector:
+  def __init__(self, env, maxStepsUnchanged=100):
+    self._env = env
+    self._maxStepsUnchanged = maxStepsUnchanged
+    
+    self._lastScore = env.score
+    self._lastValuableStep = env.steps
+    return
+  
+  def deathRatio(self):
+    if self._lastScore < self._env.score:
+      self._lastScore = self._env.score
+      self._lastValuableStep = self._env.steps
+
+    return min((1, (self._env.steps - self._lastValuableStep) / self._maxStepsUnchanged))
+  
+RLAgent = namedtuple('RLAgent', 'name agent environment detector')
 
 class App:
   MODES = ['manual', 'random', 'agent']
@@ -74,10 +90,9 @@ class App:
   def _assignMaze2Agents(self):
     agents = []
     for agent in self._agents:
-      agents.append(RLAgent(
-        agent.name, agent.agent,
-        self._initMaze.copy()
-      ))
+      env = self._initMaze.copy()
+      detector = DeathDetector(env)
+      agents.append(RLAgent(agent.name, agent.agent, env, detector))
 
     self._agents = agents
     return
@@ -94,15 +109,16 @@ class App:
       name = os.path.basename(filename)
  
       self._agents.append(RLAgent(
-        name[:-3], agent, self._initMaze.copy()
+        name[:-3], agent, None, None
       ))
      
     self._agents.insert(0, RLAgent(
       'ensemble', 
       DQNEnsembleAgent(models),
-      self._initMaze.copy()
+      None, None
     ))
     
+    self._assignMaze2Agents()
     self._activeAgent = 0
     self._paused = True
     return
@@ -180,7 +196,36 @@ class App:
             maze.apply(act)
     pass
   
+  def _renderMazeMinimap(self, env):
+    anchor = np.array((450, 650))
+    maze, moves = env.minimap()
+    
+    COLOR_A = pygame.Color(*Colors.GREEN)
+    COLOR_B = pygame.Color(*Colors.WHITE)
+    
+    h, w = maze.shape
+    dx, dy = delta = 2 * np.array([64, 64]) / np.array([w, h])
+    for ix in range(w):
+      for iy in range(h):
+        isWall = 0 < maze[ix, iy]
+        isUnknownArea = maze[ix, iy] < 0
+        
+        clr = Colors.WHITE
+        if 0 < moves[ix, iy]:
+          clr = COLOR_B.lerp(COLOR_A, max((0.25, moves[ix, iy])) )
+        if isWall: clr = Colors.PURPLE
+        if isUnknownArea: clr = Colors.BLACK
+  
+        y, x = (delta * np.array([ix, iy])) + anchor
+        pygame.draw.rect(self._display_surf, clr, [x, y, dx - 1, dy - 1], 0)
+    
+    self._drawText('Observed state:', (anchor[1], anchor[0] - 25), Colors.BLUE)
+    return
+  
   def _renderMaze(self, env):
+    COLOR_A = pygame.Color(*Colors.GREEN)
+    COLOR_B = pygame.Color(*Colors.WHITE)
+    
     fog = env.fog
     moves = env.moves
     maze = env.maze
@@ -191,11 +236,11 @@ class App:
       for iy in range(h):
         isDiscovered = 0 < fog[ix, iy]
         isWall = 0 < maze[ix, iy]
-        isWasHere = 0 < moves[ix, iy]
         y, x = delta * np.array([ix, iy])
         
         clr = Colors.WHITE
-        if isWasHere: clr = Colors.GREEN
+        if 0 < moves[ix, iy]:
+          clr = COLOR_B.lerp(COLOR_A, max((0.25, moves[ix, iy])) )
         if isWall: clr = Colors.PURPLE
         
         if not isDiscovered:
@@ -204,6 +249,7 @@ class App:
     # current pos
     x, y = delta * env.pos
     pygame.draw.rect(self._display_surf, Colors.RED, [x, y, dx - 1, dy - 1], 0)
+    self._renderMazeMinimap(env)
     return
   
   def _renderAgentsMaze(self):
@@ -233,12 +279,13 @@ class App:
     if 'agent' == self._mode:
       self._drawText('Speed: x%.0f' % (self._speed), line(1), Colors.BLUE)
       for i, agent in enumerate(self._agents):
+        deathRatio = agent.detector.deathRatio()
         self._drawText(
           '%s%s | %.1f (%d)' % (
             '>> ' if i == self._activeAgent else '',
             agent.name, agent.environment.score * 100.0, agent.environment.steps
           ),
-          line(2 + i), Colors.BLUE
+          line(2 + i), Colors.BLUE if deathRatio < 1 else Colors.BLACK
         )
     return
   

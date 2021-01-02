@@ -2,8 +2,6 @@ import tensorflow as tf
 import numpy as np
 
 def train(model, memory, params):
-  if len(memory) < params['batchSize']: return np.Inf
-  
   modelClone = tf.keras.models.clone_model(model)
   modelClone.set_weights(model.get_weights()) # use clone model for stability
   

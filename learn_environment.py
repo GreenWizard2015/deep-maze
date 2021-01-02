@@ -87,17 +87,18 @@ def learn_environment(model, params):
     )
     print('Avg. train loss: %.4f' % trainLoss)
     
-    trainLoss = fit_stage.train(
-      model, doomMemory,
-      {
-        'gamma': GAMMA,
-        'batchSize': BATCH_SIZE,
-        'steps': BOOTSTRAPPED_STEPS,
-        'episodes': params['train doom episodes'](epoch),
-        'alpha': params.get('doom alpha', lambda _: alpha)(epoch)
-      }
-    )
-    print('Avg. train doom loss: %.4f' % trainLoss)
+    if params['batchSize'] < len(doomMemory):
+      trainLoss = fit_stage.train(
+        model, doomMemory,
+        {
+          'gamma': GAMMA,
+          'batchSize': BATCH_SIZE,
+          'steps': BOOTSTRAPPED_STEPS,
+          'episodes': params['train doom episodes'](epoch),
+          'alpha': params.get('doom alpha', lambda _: alpha)(epoch)
+        }
+      )
+      print('Avg. train doom loss: %.4f' % trainLoss)
     ##################
     # test
     print('Testing...')

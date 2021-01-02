@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 import tensorflow as tf
 import os
-from Agent.DQNEnsembleAgent import DQNEnsembleAgent
 # limit GPU usage
 gpus = tf.config.experimental.list_physical_devices('GPU')
 tf.config.experimental.set_virtual_device_configuration(
@@ -15,6 +14,7 @@ import pygame
 import pygame.locals as G
 import random
 from Agent.DQNAgent import DQNAgent
+from Agent.DQNEnsembleAgent import DQNEnsembleAgent
 import glob
 from collections import namedtuple
 from model import createModel

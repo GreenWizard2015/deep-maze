@@ -3,35 +3,23 @@ import math
 import tensorflow.keras as keras
 import tensorflow.keras.layers as layers
 import tensorflow as tf
+from Agent.MaskedSoftmax import MaskedSoftmax
 
 def combineModels(models, combiner):
   shape = models[0].layers[0].input_shape[0][1:]
   inputs = layers.Input(shape=shape)
   actionsMask = layers.Input(shape=(4, ))
-  res = layers.Lambda(combiner)([actionsMask] + [ x(inputs) for x in models ])
+  
+  predictions = [ layers.Reshape((1, -1))(
+    MaskedSoftmax()( x(inputs), actionsMask )
+  ) for x in models ]
+  
+  res = layers.Lambda(combiner)( layers.Concatenate(axis=1)(predictions)  )
   return keras.Model(inputs=[inputs, actionsMask], outputs=res)
 
-def maskedSoftmax(mask, inputs):
-  mask = tf.where(tf.equal(mask, 1))
-  return [
-    tf.sparse.to_dense(
-      tf.sparse.softmax(
-        tf.sparse.SparseTensor(
-          indices=mask,
-          values=tf.gather_nd(x, mask),
-          dense_shape=tf.shape(x, out_type=tf.int64)
-        )
-      )
-    ) for x in inputs
-  ]
-  
-def multiplyOutputs(inputs):
-  outputs = maskedSoftmax(inputs[0], inputs[1:])
-  
-  res = 1 + outputs[0]
-  for x in outputs[1:]:
-    res = tf.math.multiply(res, 1 + x)
-  return res
+@tf.function
+def multiplyOutputs(outputs):
+  return tf.math.reduce_prod(1 + outputs, axis=1)
 
 ENSEMBLE_MODE = {
   'multiply': multiplyOutputs

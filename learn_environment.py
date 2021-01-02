@@ -87,7 +87,7 @@ def learn_environment(model, params):
     )
     print('Avg. train loss: %.4f' % trainLoss)
     
-    if params['batchSize'] < len(doomMemory):
+    if BATCH_SIZE < len(doomMemory):
       trainLoss = fit_stage.train(
         model, doomMemory,
         {

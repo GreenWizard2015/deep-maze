@@ -79,12 +79,13 @@ if __name__ == "__main__":
     'Worst scores (top 90%)': {},
     'Best scores (top 10%)': {}
   }
-  models = []
+  agents = []
   for i, x in enumerate(glob.iglob('weights/*.h5')):
     filename = os.path.abspath(x)
     model = createModel(shape=MODEL_INPUT_SHAPE)
     model.load_weights(filename)
-    models.append(model)
+    if os.path.basename(filename).startswith('agent-'):
+      agents.append(model)
     
     testAgent(
       environments,
@@ -95,7 +96,7 @@ if __name__ == "__main__":
 
   testAgent(
     environments,
-    DQNEnsembleAgent(models),
+    DQNEnsembleAgent(agents),
     name='ensemble',
     metrics=metrics
   )

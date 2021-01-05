@@ -104,9 +104,10 @@ class App:
       filename = os.path.abspath(x)
       model = createModel(shape=self._maze.input_size)
       model.load_weights(filename)
-      models.append(model)
-      agent = DQNAgent(model)
       name = os.path.basename(filename)
+      if name.startswith('agent-'):
+        models.append(model)
+      agent = DQNAgent(model)
  
       self._agents.append(RLAgent(
         name[:-3], agent, None, None

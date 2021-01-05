@@ -2,6 +2,13 @@ import pylab as plt
 import numpy as np
 import math
 
+def softmax(x, mask=None):
+  e_x = np.exp(x - x.max(axis=-1, keepdims=True))
+  if not (mask is None):
+    e_x *= mask
+  e_sum = e_x.sum(axis=-1, keepdims=True)
+  return np.divide(e_x, e_sum, out=np.zeros_like(e_x), where=(e_sum != 0))
+
 def emulateBatch(testEnvs, agent, maxSteps):
   replays = [[] for _ in testEnvs]
   steps = 0

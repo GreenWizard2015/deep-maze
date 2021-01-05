@@ -15,6 +15,7 @@ def combineModels(models, combiner):
   ) for x in models ]
   
   res = layers.Lambda(combiner)( layers.Concatenate(axis=1)(predictions)  )
+  res = MaskedSoftmax()( res, actionsMask )
   return keras.Model(inputs=[inputs, actionsMask], outputs=res)
 
 @tf.function
@@ -45,11 +46,10 @@ class DQNEnsembleAgent:
       actions[rndIndexes] = np.random.random_sample(actions.shape)[rndIndexes]
 
     if not (self._noise is None):
-      # softmax
-      e_x = np.exp(actions - actions.max(axis=-1, keepdims=True))
-      normed = e_x / e_x.sum(axis=-1, keepdims=True)
-      # add noise
       actions = normed + (np.random.random_sample(actions.shape) * self._noise)
 
     actions[np.where(~(1 == np.array(actionsMask)))] = -math.inf
     return actions.argmax(axis=-1)
+  
+  def predict(self, states, actionsMask):
+    return self._model.predict([states, actionsMask])

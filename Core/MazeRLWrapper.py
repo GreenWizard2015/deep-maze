@@ -42,11 +42,11 @@ class MazeRLWrapper:
     if self._env.dead: # unreachable due to actions masking 
       return nextState, -10, True, prevState
 
-    if 0.95 <= self._env.score: 
+    if 0.99 <= self._env.score: 
       return nextState, 0, True, prevState
     
     if self._movingLoop():
-      return nextState, -5, True, prevState
+      return nextState, 0, True, prevState
 
     self._done = False
     reward = 0.3 if isNewCell else 0 # small reward for visiting new cell

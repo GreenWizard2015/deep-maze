@@ -52,13 +52,11 @@ if __name__ == "__main__":
     'warm up epochs': 0,
     'test episodes': 128,
     'train episodes': lambda _: 128,
-    'train doom episodes': lambda _: 32,
 
     'alpha': lambda _: 1,
     'explore rate': lambda _: 0,
     
     'agent noise': 0.01,
-    'clip replay': True,
     
     'explore rate after loop': 0.2,
     'agent noise after loop': 0.1

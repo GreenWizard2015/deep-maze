@@ -106,10 +106,6 @@ def learn_environment(teacher, model, params):
   ]
   
   memory = CebPrioritized(maxSize=5000, sampleWeight='abs')
-  doomMemory = CebLinear(
-    maxSize=params.get('max steps after loop', 16) * 10000,
-    sampleWeight='abs'
-  )
   trainableModel, teacherPower = wrapStudentModel(model)
   ######################################################
   def withTeacherPredictions(replay):
@@ -119,24 +115,20 @@ def learn_environment(teacher, model, params):
   
   def testModel(EXPLORE_RATE):
     for e in environments: e.reset()
-    replays = Utils.emulateBatch(
-      environments,
-      DQNAgent(model, exploreRate=EXPLORE_RATE, noise=params.get('agent noise', 0)),
-      maxSteps=params.get('max test steps')
-    )
-    for replay, _ in replays:
-      if params.get('clip replay', False):
-        replay = Utils.clipReplay(replay, loopLimit=LOOP_LIMIT)
-      if BOOTSTRAPPED_STEPS < len(replay):
-        memory.addEpisode(withTeacherPredictions(replay), terminated=True)
+    replays = [replay for replay, _ in Utils.emulateBatch(
+        environments,
+        DQNAgent(model, exploreRate=EXPLORE_RATE, noise=params.get('agent noise', 0)),
+        maxSteps=params.get('max test steps')
+      )
+    ]
     
-    scores = [x.score for x in environments]
     ################
-    # collect bad experience
-    envs = [e for e in environments if e.hitTheLoop]
-    if envs:
+    # explore if hit the loop
+    envsIndexes = [i for i, e in enumerate(environments) if e.hitTheLoop]
+    if envsIndexes:
+      envs = [environments[i] for i in envsIndexes]
       for e in envs: e.Continue()
-      replays = Utils.emulateBatch(
+      exploreReplays = Utils.emulateBatch(
         envs,
         DQNAgent(
           model,
@@ -145,11 +137,13 @@ def learn_environment(teacher, model, params):
         ),
         maxSteps=params.get('max steps after loop', 16)
       )
-      for replay, _ in replays:
-        if BOOTSTRAPPED_STEPS < len(replay):
-          doomMemory.addEpisode(withTeacherPredictions(replay), terminated=True)
+      for ind, (replay, _) in zip(envsIndexes, exploreReplays):
+        replays[ind] += replay[1:]
     ################
-    return scores
+    for replay in replays:
+      if BOOTSTRAPPED_STEPS < len(replay):
+        memory.addEpisode(withTeacherPredictions(replay), terminated=True)
+    return [x.score for x in environments]
   ######################################################
   # collect some experience
   for _ in range(2):
@@ -181,19 +175,6 @@ def learn_environment(teacher, model, params):
       }
     )
     print('Avg. train loss: %.4f' % trainLoss)
-    
-    if BATCH_SIZE < len(doomMemory):
-      trainLoss = train(
-        model, trainableModel, doomMemory,
-        {
-          'gamma': GAMMA,
-          'batchSize': BATCH_SIZE,
-          'steps': BOOTSTRAPPED_STEPS,
-          'episodes': params['train doom episodes'](epoch),
-          'alpha': params.get('doom alpha', lambda _: alpha)(epoch)
-        }
-      )
-    print('Avg. train doom loss: %.4f' % trainLoss)
     ##################
     # test
     print('Testing...')
@@ -249,13 +230,11 @@ if __name__ == "__main__":
     'warm up epochs': 0,
     'test episodes': 128,
     'train episodes': lambda _: 128,
-    'train doom episodes': lambda _: 32,
 
     'alpha': lambda _: 1,
     'explore rate': lambda _: 0,
     
     'agent noise': 0.01,
-    'clip replay': True,
     
     'explore rate after loop': 0.2,
     'agent noise after loop': 0.1,

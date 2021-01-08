@@ -20,7 +20,7 @@ from collections import namedtuple
 from model import createModel
 
 def createMaze():
-  sz = 16 * 4
+  sz = 64
   maze = (0.8 < np.random.rand(sz, sz)).astype(np.float32)
   res = CMazeEnvironment(
     maze=maze,

@@ -5,14 +5,12 @@ import time
 import Utils
 import fit_stage
 import os
-from Utils.ExperienceBuffers.CebLinear import CebLinear
 
 def learn_environment(model, params):
   NAME = params['name']
   BATCH_SIZE = params['batch size']
   GAMMA = params['gamma']
   BOOTSTRAPPED_STEPS = params['bootstrapped steps']
-  LOOP_LIMIT = params['maze']['loop limit']
   metrics = {}
 
   environments = [
@@ -20,32 +18,23 @@ def learn_environment(model, params):
   ]
   
   memory = CebPrioritized(maxSize=5000, sampleWeight='abs')
-  doomMemory = CebLinear(
-    maxSize=params.get('max steps after loop', 16) * 1000,
-    sampleWeight='abs'
-  )
-  
   ######################################################
   def testModel(EXPLORE_RATE):
     for e in environments: e.reset()
-    replays = Utils.emulateBatch(
-      environments,
-      DQNAgent(model, exploreRate=EXPLORE_RATE, noise=params.get('agent noise', 0)),
-      maxSteps=params.get('max test steps')
-    )
-    for replay, _ in replays:
-      if params.get('clip replay', False):
-        replay = Utils.clipReplay(replay, loopLimit=LOOP_LIMIT)
-      if BOOTSTRAPPED_STEPS < len(replay):
-        memory.addEpisode(replay, terminated=True)
+    replays = [replay for replay, _ in Utils.emulateBatch(
+        environments,
+        DQNAgent(model, exploreRate=EXPLORE_RATE, noise=params.get('agent noise', 0)),
+        maxSteps=params.get('max test steps')
+      )
+    ]
     
-    scores = [x.score for x in environments]
     ################
-    # collect bad experience
-    envs = [e for e in environments if e.hitTheLoop]
-    if envs:
+    # explore if hit the loop
+    envsIndexes = [i for i, e in enumerate(environments) if e.hitTheLoop]
+    if envsIndexes:
+      envs = [environments[i] for i in envsIndexes]
       for e in envs: e.Continue()
-      replays = Utils.emulateBatch(
+      exploreReplays = Utils.emulateBatch(
         envs,
         DQNAgent(
           model,
@@ -54,11 +43,13 @@ def learn_environment(model, params):
         ),
         maxSteps=params.get('max steps after loop', 16)
       )
-      for replay, _ in replays:
-        if BOOTSTRAPPED_STEPS < len(replay):
-          doomMemory.addEpisode(replay, terminated=True)
+      for ind, (replay, _) in zip(envsIndexes, exploreReplays):
+        replays[ind] += replay[1:]
     ################
-    return scores
+    for replay in replays:
+      if BOOTSTRAPPED_STEPS < len(replay):
+        memory.addEpisode(replay, terminated=True)
+    return [x.score for x in environments]
   ######################################################
   # collect some experience
   for _ in range(2):
@@ -86,19 +77,6 @@ def learn_environment(model, params):
       }
     )
     print('Avg. train loss: %.4f' % trainLoss)
-    
-    if BATCH_SIZE < len(doomMemory):
-      trainLoss = fit_stage.train(
-        model, doomMemory,
-        {
-          'gamma': GAMMA,
-          'batchSize': BATCH_SIZE,
-          'steps': BOOTSTRAPPED_STEPS,
-          'episodes': params['train doom episodes'](epoch),
-          'alpha': params.get('doom alpha', lambda _: alpha)(epoch)
-        }
-      )
-      print('Avg. train doom loss: %.4f' % trainLoss)
     ##################
     # test
     print('Testing...')

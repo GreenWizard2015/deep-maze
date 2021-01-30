@@ -10,7 +10,7 @@ _WEIGHTS_MODES = {
 }
 
 class CebLinear:
-  def __init__(self, maxSize, sampleWeight='samp'):
+  def __init__(self, maxSize, sampleWeight='same'):
     self.maxSize = maxSize
     self._sizeLimit = math.floor(maxSize * 1.1)
     self._samples = []

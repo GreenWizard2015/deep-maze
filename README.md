@@ -1,75 +1,61 @@
 # Deep Maze
 
-[English](README_en.md)
-
 [Video v.0](https://www.youtube.com/watch?v=rSkxOtRhY24)
 
 [Video v.1 (current version)](https://youtu.be/-w3PGBhAnzM)
 
-Этот проект является симуляцией изучения простого grid world-a ботом с ограниченным полем зрения. Очки начисляются исключительно за открытие новых участков мира, что требует, как минимум, планирования и навигации.
+This project is a simulation of a simple grid world exploration by a bot with limited field of view. Points are only awarded for opening new areas of the world, which requires at least planning and navigation.
 
-Типовые настройки мира:
+Typical world settings:scss
 
 ```
-Размер - 64x64
-Вероятность генерации препятствия - 80%
-Открываемая область пространства вокруг агента - 7x7
-Видимая область - 17x17
+Size - 64x64
+Obstacle generation probability - 80%
+Open area around the agent - 7x7
+Visible area - 17x17
 ```
 
-В данный момент, используется простой Q-learning, без какой-либо памяти, поэтому в состояние мира был добавлен срез с данными о прошлых передвижениях агента. Таким образом, агент получает данные о проходимости окружающих его клеток и о передвижениях (проходил ли по ячейке и как давно). Текущая версия окружения является чересчур упрощённой и может быть легко решена алгоритмически, но полученный опыт, приёмы и наблюдения могут быть применены к более реальным задачам. Например, карта может быть расширена до тысяч ячеек, с искажениями и другими осложняющими факторами.
+At the moment, a simple Q-learning without any memory is used, so a slice with data on the agent's previous movements was added to the state of the world. Thus, the agent receives data on the passability of the cells around it and on the movements (whether it passed through the cell and how long ago). The current version of the environment is too simplified and can be easily solved algorithmically, but the experience, techniques, and observations gained can be applied to more real-world problems. For example, the map can be expanded to thousands of cells, with distortions and other complicating factors.
 
-Агенты очень часто застревали в сложных участках, поэтому было добавлено детектирование данного поведения, остановка агента и запуск того же агента в режиме исследования. Полученные таким способом данные помещаются в отдельную память, чтобы потом обучить агента как действовать в подобных ситуациях. Эмпирически эффект заметен, но нельзя однозначно утверждать пользу подобного подхода.
+Agents often got stuck in difficult areas, so detection of this behavior was added, the agent was stopped and the same agent was launched in exploration mode. The data obtained in this way is placed in separate memory to later train the agent on how to act in similar situations. Empirically, the effect is noticeable, but it cannot be unequivocally stated that this approach is beneficial.
 
-Изначально использовалась CNN (что логичнее для карт), но простая Dense-сетка давала сравнимые результат. Возможно, конечно, что остальные доработки могли привести к более заметному улучшению предсказаний CNN. Кроме того, были испробованы различные варианты наград, начальных условий, предобработки и др.
+Initially, a CNN was used (which is more logical for grids), but a simple Dense network gave comparable results. Of course, it is possible that other improvements could have led to more noticeable improvements in CNN predictions. In addition, various options for rewards, initial conditions, preprocessing, etc. were tried.
 
-Длительная тренировка одного агента не давала ощутимого прогресса, поэтому, в итоге, были натренированы 4 версии той же сети и затем их решения объединялись вместе (см. [DQNEnsembleAgent.py](Agent/DQNEnsembleAgent.py)). Ансамбль из агентов позволяет получать более стабильные результаты в сложных ситуациях. Например, если агент попадает в сложный участок пространства, то существенно выше шанс что он сможет попытаться найти выход, чем когда агент основывается на предсказании лишь одной сети.
+Long training of one agent did not show significant progress, so in the end, 4 versions of the same network were trained and then their solutions were combined together (see [DQNEnsembleAgent.py](Agent/DQNEnsembleAgent.py)). An ensemble of agents allows for more stable results in difficult situations. For example, if an agent gets into a difficult area of space, there is a much higher chance that it will be able to find a way out, than when the agent relies on the prediction of only one network.
 
-Общий принцип работы ансамбля:
+The general principle of ensemble:
 
 ![](img/ensemble.png)
 
-Ниже показано сравнение верхней границы (кол-во открытой области в 10 симуляциях из 100, по 20 прогонов):
+Below is a comparison of the upper bound (the amount of open space in 10 simulations out of 100, by 20 trials each):
 
 ![](img/20201231-high.jpg)
 
-Как видно, ансамбль ведёт себя стабильнее, но не намного лучше отдельных его частей.
+As can be seen, the ensemble behaves more stable, but not significantly better than its individual parts.
 
-А это нижняя граница (кол-во открытой области в 90 симуляциях из 100, по 20 прогонов), при худших начальных условиях:
+And this is the lower bound (the amount of open space in 90 simulations out of 100, by 20 trials each), under the worst initial conditions:
 
 ![](img/20201231-low.jpg)
 
-Опять же, прямо ощутимого улучшения нет, но ансамбль немного стабильнее открывает 20-25% карты.
+Again, there is no noticeable improvement, but the ensemble opens 20-25% of the map more stably.
 
-# Дистилляция ансамбля
+# Distillation of the ensemble
 
-Новая сеть обучалась с дополнительным лоссом, который определяет сходство распределения Q-values обучаемой сети с предсказанием ансамбля. 
+The new network was trained with an additional loss that determines the similarity of the Q-values distribution of the trained network with the ensemble prediction.
 
 ![](img/20210106-distilled.jpg)
 
-Обучаемая с учителем нейронная сеть практически сразу же достигает более высоких результатов, чем обучаемая без учителя. Более того, в полноценных тестах она показывает себя немного лучше ансамбля:
+The supervised neural network almost immediately achieves higher results than the unsupervised one. Moreover, in full-scale tests, it shows itself slightly better than the ensemble:
 
 ![](img/20210106-high.jpg)
 
 ![](img/20210106-low.jpg)
 
-Некоторые наблюдения:
+Some observations:
 
-- Новая сеть какое-то время (10-30 эпох) способна показывать хорошие результаты, если "копировать" только распределение и не контролировать сами значения. Это вполне ожидаемо, но всё же интересно.
-- Сеть лишь копирует распределение, поэтому не способна улучшить результаты. Вполне возможно, что необходимо более длительное обучение, чтоб сеть полностью адаптировала Q-values к распределению диктуемому ансамблем, а затем она смогла бы продолжить обучение. Целесообразно ли это? Не лучше ли тогда обучить сеть полностью с нуля?
-- Ансамбль усредняет поведение агентов, выделяя общее поведение. Новая сеть копирует усреднённое поведение, тоже сглаживая нюансы поведения, стратегию. Таким образом, новая сеть теряет особенности, которые позволяли агентам демонстрировать более хорошие результаты в особых ситуациях. Как тогда эффективно объединять "знания" агентов? Полезные материалы по данной теме:
+- The new network is able to show good results for some time (10-30 epochs), if it only "copies" the distribution and does not control the values themselves. This is quite expected, but still interesting.
+- The network only copies the distribution, so it is not able to improve the results. It is possible that longer training is needed for the network to fully adapt the Q-values to the ensemble's dictated distribution, and then it could continue training. Is this feasible? Wouldn't it be better to train the network from scratch?
+- The ensemble averages the behavior of agents, highlighting common behavior. The new network copies the averaged behavior, also smoothing out the nuances of behavior and strategy. Thus, the new network loses the features that allowed agents to demonstrate better results in special situations. How then to effectively combine the "knowledge" of agents? Useful resources on this topic:
   - [Distill and transfer learning for robust multitask RL (YouTube)](https://www.youtube.com/watch?v=scf7Przmh7c)
   - [Teacher-Student Framework: A Reinforcement Learning Approach](https://www.researchgate.net/publication/280255927_Teacher-Student_Framework_A_Reinforcement_Learning_Approach)
   - [Progressive Reinforcement Learning with Distillation for Multi-Skilled Motion Control](https://arxiv.org/abs/1802.04765)
-
-# Идеи и эксперименты
-
-- [ ] Реализовать дистилляцию нескольких политик, используя доп. награды или иные методы.
-- [ ] Сравнить обученного без учителя агента с обученным с учителем. (500 эпох)
-- [ ] Обучить агента, который не получает информацию о своих перемещениях (только с данным об окружении).
-- [ ] Реализовать полноценного агента с памятью.
-- [ ] Использовать A2C или иные методы, фундаментально отличающиеся от DQN.
-
-# Области применения
-
-Подобного рода задачи встречаются повсеместно в робототехнике, например.
